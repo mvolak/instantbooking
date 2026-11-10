@@ -103,6 +103,47 @@ export function createBookingRepository(sql: Sql): BookingRepository {
       return rows.map(toAvailableSlot);
     },
 
+    async findAvailableDates(serviceId, days, now) {
+      // "Today" is the earliest current local date among the service's providers
+      // (UTC if it has none). Each slot is counted on its provider-local date,
+      // with exactly the same filters as findAvailableSlots.
+      const rows = await sql<{ date: string; available_slots: number }[]>`
+        with first_day as (
+          select coalesce(
+            min((${now}::timestamptz at time zone p.timezone)::date),
+            (${now}::timestamptz at time zone 'UTC')::date
+          ) as day
+          from public.providers p
+          where p.active
+            and exists (select 1 from public.slots s where s.provider_id = p.id and s.service_id = ${serviceId})
+        ),
+        calendar as (
+          select f.day + offs as day
+          from first_day f, generate_series(0, ${days}::int - 1) as offs
+        ),
+        free as (
+          select (s.starts_at at time zone p.timezone)::date as day
+          from public.slots s
+          join public.providers p on p.id = s.provider_id
+          join public.services sv on sv.id = s.service_id
+          where s.service_id = ${serviceId}
+            and s.active and p.active and sv.active
+            and s.starts_at > ${now}::timestamptz
+            and s.starts_at < ${now}::timestamptz + make_interval(days => ${days}::int + 2)
+            and not exists (
+              select 1 from public.bookings b
+              where b.slot_id = s.id and b.status = 'confirmed'
+            )
+        )
+        select to_char(c.day, 'YYYY-MM-DD') as date, count(f.day)::int as available_slots
+        from calendar c
+        left join free f on f.day = c.day
+        group by c.day
+        order by c.day
+      `;
+      return rows.map((row) => ({ date: row.date, availableSlots: row.available_slots }));
+    },
+
     async insertBooking({ slotId, guestName, managementTokenHash, idempotencyKeyHash, now }) {
       try {
         // Single atomic statement: availability is checked and the row inserted

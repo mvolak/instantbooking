@@ -38,6 +38,13 @@ export type AvailableSlot = {
   endsAtLocal: string;
 };
 
+/** Availability summary for one calendar day (provider-local date). */
+export type AvailableDate = {
+  /** YYYY-MM-DD in the provider's timezone. */
+  date: string;
+  availableSlots: number;
+};
+
 export type BookingStatus = "confirmed" | "cancelled";
 
 /** Public view of a booking. Never contains the management token hash. */
@@ -79,6 +86,12 @@ export interface BookingRepository {
   findActiveServiceById(serviceId: string): Promise<Service | null>;
   /** Active, unbooked slots on `date` (in each provider's timezone), starting after `now`. */
   findAvailableSlots(serviceId: string, date: string, now: Date): Promise<AvailableSlot[]>;
+  /**
+   * One entry per day for `days` consecutive provider-local days starting today
+   * (including days with zero availability), counted with the same rules as
+   * `findAvailableSlots`.
+   */
+  findAvailableDates(serviceId: string, days: number, now: Date): Promise<AvailableDate[]>;
   insertBooking(input: {
     slotId: string;
     guestName: string;

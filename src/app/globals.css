@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  /* Calm, welcoming palette: warm sand surfaces, sage accents, deep green ink. */
+  --color-sand-50: #fbf9f5;
+  --color-sand-100: #f5f0e7;
+  --color-sand-200: #ebe2d3;
+  --color-sand-300: #d9cbb4;
+
+  --color-sage-50: #f0f6f2;
+  --color-sage-100: #dcebe2;
+  --color-sage-200: #bbd7c7;
+  --color-sage-300: #8fbba3;
+  --color-sage-500: #4d8a70;
+  --color-sage-600: #3b7159;
+  --color-sage-700: #2f5a48;
+  --color-sage-800: #24463a;
+  --color-sage-900: #1a332a;
+
+  --color-ink: #1b2622;
+  --color-ink-muted: #56645e;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-sand-50 text-ink font-sans antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-sage-600;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

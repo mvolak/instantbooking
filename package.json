@@ -12,6 +12,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:fresh": "supabase db reset && vitest run && npm run db:seed:demo",
+    "test:e2e": "npm run db:seed:demo && playwright test",
     "test:watch": "vitest",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
@@ -22,6 +23,7 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
+    "lucide-react": "^1.71.0",
     "next": "16.4.6",
     "postgres": "^4.1.0",
     "react": "19.3.0",
@@ -30,12 +32,20 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@tailwindcss/postcss": "^4.3.5",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.9",
     "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "jsdom": "^31.0.0",
     "supabase": "^3.1.0",
+    "tailwindcss": "^4.3.5",
     "typescript": "^5",
     "vitest": "^5.1.0"
   },

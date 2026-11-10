@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import {
   createBookingInput,
+  findAvailableDatesInput,
   findAvailableSlotsInput,
   getBookingInput,
   managementTokenSchema,
@@ -8,6 +9,7 @@ import {
 import { BookingError } from "./errors";
 import { generateManagementToken, sha256Hex, verifyToken } from "./tokens";
 import type {
+  AvailableDate,
   AvailableSlot,
   Booking,
   BookingRepository,
@@ -44,6 +46,19 @@ export function createBookingCapability({ repository, now = () => new Date() }: 
       throw new BookingError("SERVICE_NOT_FOUND", "Service not found");
     }
     return repository.findAvailableSlots(input.serviceId, input.date, now());
+  }
+
+  /**
+   * Per-day availability counts for the next `days` provider-local days, starting
+   * today. Lets callers pick the next bookable date without probing each day.
+   */
+  async function findAvailableDates(serviceId: string, days = 14): Promise<AvailableDate[]> {
+    const input = parse(findAvailableDatesInput, { serviceId, days });
+    const service = await repository.findActiveServiceById(input.serviceId);
+    if (!service) {
+      throw new BookingError("SERVICE_NOT_FOUND", "Service not found");
+    }
+    return repository.findAvailableDates(input.serviceId, input.days, now());
   }
 
   async function createBooking(
@@ -117,7 +132,7 @@ export function createBookingCapability({ repository, now = () => new Date() }: 
     return found.booking;
   }
 
-  return { listServices, findAvailableSlots, createBooking, getBooking };
+  return { listServices, findAvailableDates, findAvailableSlots, createBooking, getBooking };
 }
 
 function replayed(result: Exclude<RetryResult, { kind: "not_found" }>, managementToken: string): CreateBookingResult {

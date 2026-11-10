@@ -4,37 +4,52 @@
 booking capability, independent of the interfaces that will expose it (web, AI
 conversations, generative UI, X, Microsoft Teams, …).
 
-This is **M1 — Foundation & Booking Engine**: persistence, the four booking
-operations, a REST API and tests. There is no AI, UI, authentication or channel
-adapter yet.
+Milestones so far:
+
+- **M1 — Foundation & Booking Engine:** persistence, the booking operations, a REST API and tests.
+- **M2 — Content + Actionable Landing Page:** a landing page for the fictional
+  *Motion Studio*. The page itself is the booking interface, built on the M1 REST API.
+
+There is no AI, authentication or channel adapter yet.
 
 ## Stack
 
-Node.js 24 · TypeScript (strict) · Next.js 16 App Router (Route Handlers) ·
-Supabase PostgreSQL · [postgres.js](https://github.com/porsager/postgres) · Zod 4 · Vitest
+Node.js 24 · TypeScript (strict) · Next.js 16 App Router · React 19 · Tailwind CSS 4 ·
+lucide-react · Supabase PostgreSQL · [postgres.js](https://github.com/porsager/postgres) · Zod 4 ·
+Vitest + React Testing Library · Playwright
 
 ## Architecture
 
 ```text
 src/
 ├── domain/booking/          # The capability. No Next.js, no SQL, no channel code.
-│   ├── capability.ts        #   listServices · findAvailableSlots · createBooking · getBooking
+│   ├── capability.ts        #   listServices · findAvailableDates · findAvailableSlots
+│   │                        #   · createBooking · getBooking
 │   ├── types.ts             #   entities + BookingRepository port
 │   ├── errors.ts            #   BookingError with channel-neutral codes
-│   └── tokens.ts            #   management token generation / hashing
+│   ├── tokens.ts            #   management token generation / hashing
+│   └── time.ts              #   UTC → provider-local ISO 8601
 ├── schemas/booking.ts       # Zod input schemas shared by domain and adapters
 ├── infrastructure/
 │   ├── db/client.ts         # server-only Postgres pool (DATABASE_URL)
 │   ├── db/booking-repository.ts  # SQL implementation of the port
 │   └── booking-capability.ts     # production wiring (repo + system clock)
-└── app/api/                 # REST adapter: thin Route Handlers → capability
+├── app/api/                 # REST adapter: thin Route Handlers → capability
+├── app/page.tsx             # landing page (static content + booking widget)
+├── lib/booking-client.ts    # typed, framework-free client for the REST API
+└── components/
+    ├── landing/             # SiteHeader, LandingHero, HowItWorks, AboutStudio, SiteFooter
+    └── booking/             # BookingWidget, ServiceCard, DateSelector, AvailableSlots,
+                             # GuestDetails, BookingConfirmation; booking-flow.ts = state machine
 supabase/
 ├── migrations/              # schema, constraints, demo seed function
 └── seed.sql                 # fixed, deterministic seed window
 scripts/seed-demo.mts        # refresh demo data for upcoming dates
 tests/
-├── unit/                    # tokens, schemas, validation (no DB)
-└── integration/             # real PostgreSQL: capability, concurrency, constraints, API
+├── unit/                    # tokens, schemas, time, API client (no DB)
+├── integration/             # real PostgreSQL: capability, concurrency, constraints, API
+└── components/              # React Testing Library (jsdom) against a fake API
+e2e/                         # Playwright smoke tests (real build + real DB, desktop + mobile)
 ```
 
 A future adapter (AI tool, Teams bot, …) calls the same `BookingCapability`
@@ -161,6 +176,7 @@ bookings' tokens are `seed-token-<bookingId>`. That's demo data only.)
 | `npm run test:unit` | unit tests only (no database) |
 | `npm run test:integration` | real-PostgreSQL tests |
 | `npm run test:fresh` | rebuild the local DB from migrations + seed, run all tests, re-add demo data |
+| `npm run test:e2e` | refresh demo data, build, run Playwright on desktop + mobile (first time: `npx playwright install chromium`) |
 | `npm run check` | typecheck + lint + test + build |
 | `npm run db:start` / `db:stop` / `db:status` | local Supabase stack |
 | `npm run db:reset` | re-create the local DB from migrations + seed |
@@ -210,6 +226,17 @@ curl http://localhost:3000/api/services
     }
   ]
 }
+```
+
+### `GET /api/availability?serviceId=…[&days=14]`
+
+Added in M2. Returns free-slot counts per provider-local day, from today, for
+`days` days (1–31, default 14). Days without availability are included with `0`.
+The landing page uses this to open on the next bookable day; an AI agent can use
+it to answer "when is the next free slot?".
+
+```json
+{ "data": [ { "date": "2026-11-10", "availableSlots": 0 }, { "date": "2026-11-11", "availableSlots": 12 } ] }
 ```
 
 ### `GET /api/slots?serviceId=…&date=YYYY-MM-DD`
@@ -312,6 +339,10 @@ npm run test:fresh # proves the DB can be recreated: db reset → all tests → 
 
 `test:fresh` wipes the local database, including any bookings you made by hand.
 
+```bash
+npm run test:e2e   # Playwright: builds the app, books real demo slots
+```
+
 Integration tests run against real PostgreSQL. They create isolated fixtures
 (fresh providers and services) and delete them afterwards, and they read the
 fixed seed window. They inject a fixed clock into the capability, so results
@@ -323,10 +354,45 @@ booking races, concurrent idempotent retries, token rotation, authorized and
 unauthorized retrieval, database constraints applied directly via SQL, Data-API
 role lockdown, and the HTTP layer (status codes, headers, envelopes).
 
-## Known limitations (M1)
+Component tests (`tests/components`) render the booking widget against an
+in-memory fake of the REST API at the `fetch` level, so the real client and the
+real UI are tested together. They cover service loading, date defaulting and
+selection, stale-response protection, local-time slot rendering, empty and error
+states, name validation (client and server), successful booking, double-submit
+prevention, idempotency-key reuse on retry, conflict recovery, confirmation
+details taken from the server, keyboard-only booking and accessible labelling.
+
+The Playwright smoke test (`e2e/`) runs on a desktop and a mobile viewport. It
+books a real slot, races a real conflicting booking through the API, checks that
+the management token never reaches the URL, page or storage, and checks that
+nothing overflows the viewport.
+
+## Landing page and booking widget (M2)
+
+- **Visible straight away:** the widget sits in the hero, beside the copy on
+  desktop and right under it on mobile.
+- **Live data:** service, dates and times all come from the API. The widget
+  opens on the next date with free times, and full days are disabled.
+- **Local times:** times are shown in the provider's timezone (from
+  `startsAtLocal`), not the visitor's browser timezone.
+- **Predictable state:** `booking-flow.ts` is a pure reducer. Requests for an
+  old date are cancelled and stale responses are ignored.
+- **Safe booking:** each attempt (slot + name) gets an idempotency key. A retry
+  after a network or server error reuses the key, so it can't double-book. A
+  synchronous guard and a disabled button stop double clicks.
+- **Conflicts:** a 409 shows a notice, keeps the name, and reloads availability.
+- **Token handling:** the management token returned by the API is dropped
+  straight away. It is never stored, logged, shown or put in a URL. The
+  reference shown is the first 8 characters of the booking id; it grants no
+  access.
+
+## Known limitations
 
 - No cancellation endpoint yet. The `cancelled` status exists and frees the slot.
 - Slot creation has no API. Slots come from seed functions or SQL; overlap is
   still prevented by the database.
 - Slot duration isn't cross-checked against `services.duration_minutes`.
 - No rate limiting on booking creation or token guessing (tokens have 256 bits of entropy).
+- Because the management token is discarded, guests can't view or manage a
+  booking after leaving the page. Booking management is out of scope for M2.
+- Page content is static; only the booking data is live.

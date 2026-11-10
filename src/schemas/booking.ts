@@ -12,12 +12,12 @@ export const idSchema = z.guid({ message: "Must be a UUID" });
 export const isoDateSchema = z.iso.date({ message: "Must be a date in YYYY-MM-DD format" });
 
 export const guestNameSchema = z
-  .string({ message: "guestName is required" })
+  .string({ message: "Please enter your name" })
   .trim()
-  .min(1, { message: "guestName must not be empty" })
-  .max(100, { message: "guestName must be at most 100 characters" })
+  .min(1, { message: "Please enter your name" })
+  .max(100, { message: "Name must be at most 100 characters" })
   .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
-    message: "guestName must not contain control characters",
+    message: "Name must not contain line breaks or control characters",
   });
 
 /**
@@ -34,6 +34,17 @@ export const idempotencyKeySchema = z
 export const managementTokenSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{43}$/, { message: "Malformed management token" });
+
+export const MAX_AVAILABILITY_DAYS = 31;
+
+export const findAvailableDatesInput = z.object({
+  serviceId: idSchema,
+  days: z
+    .number({ message: "days must be a number" })
+    .int({ message: "days must be a whole number" })
+    .min(1, { message: "days must be at least 1" })
+    .max(MAX_AVAILABILITY_DAYS, { message: `days must be at most ${MAX_AVAILABILITY_DAYS}` }),
+});
 
 export const findAvailableSlotsInput = z.object({
   serviceId: idSchema,

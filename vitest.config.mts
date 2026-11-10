@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => ({
   },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.{ts,tsx}"],
     env: loadEnv(mode, process.cwd(), ""),
     // Integration tests share one database; run files sequentially for predictable load.
     fileParallelism: false,
