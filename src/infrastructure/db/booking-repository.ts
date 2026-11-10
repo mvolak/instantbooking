@@ -144,6 +144,23 @@ export function createBookingRepository(sql: Sql): BookingRepository {
       return rows.map((row) => ({ date: row.date, availableSlots: row.available_slots }));
     },
 
+    async findSlotById(slotId, now) {
+      const [row] = await sql<(SlotRow & { service_name: string; available: boolean })[]>`
+        select s.id, s.service_id, s.provider_id, p.display_name as provider_name,
+               p.timezone as provider_timezone, s.starts_at, s.ends_at, sv.name as service_name,
+               (s.active and p.active and sv.active and s.starts_at > ${now}
+                and not exists (
+                  select 1 from public.bookings b
+                  where b.slot_id = s.id and b.status = 'confirmed'
+                )) as available
+        from public.slots s
+        join public.providers p on p.id = s.provider_id
+        join public.services sv on sv.id = s.service_id
+        where s.id = ${slotId}
+      `;
+      return row ? { ...toAvailableSlot(row), serviceName: row.service_name, available: row.available } : null;
+    },
+
     async insertBooking({ slotId, guestName, managementTokenHash, idempotencyKeyHash, now }) {
       try {
         // Single atomic statement: availability is checked and the row inserted

@@ -63,8 +63,12 @@ test.describe("landing page booking", () => {
     expect(after.map((s) => s.id)).not.toContain(target.id);
     await page.getByRole("button", { name: "Book another appointment" }).click();
     await expect(page.getByRole("group", { name: /^Time/ })).toBeVisible();
-    if (after.length > 0) await expect(timeButton(page, hhmm(after[0]))).toBeVisible();
-    await expect(timeButton(page, hhmm(target))).toHaveCount(0);
+    // If that was the day's last free time the widget moves on to the next day,
+    // where the same clock time may legitimately exist; only check the same day.
+    if (after.length > 0) {
+      await expect(timeButton(page, hhmm(after[0]))).toBeVisible();
+      await expect(timeButton(page, hhmm(target))).toHaveCount(0);
+    }
   });
 
   test("handles a slot taken by someone else before submitting", async ({ page, request }) => {

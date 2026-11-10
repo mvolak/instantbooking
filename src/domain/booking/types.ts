@@ -38,6 +38,15 @@ export type AvailableSlot = {
   endsAtLocal: string;
 };
 
+/**
+ * A single slot looked up by id, with its service, and whether it can be
+ * booked right now (same rules as `findAvailableSlots`).
+ */
+export type SlotDetails = AvailableSlot & {
+  serviceName: string;
+  available: boolean;
+};
+
 /** Availability summary for one calendar day (provider-local date). */
 export type AvailableDate = {
   /** YYYY-MM-DD in the provider's timezone. */
@@ -92,6 +101,8 @@ export interface BookingRepository {
    * `findAvailableSlots`.
    */
   findAvailableDates(serviceId: string, days: number, now: Date): Promise<AvailableDate[]>;
+  /** One slot by id (active or not), or null if it does not exist. */
+  findSlotById(slotId: string, now: Date): Promise<SlotDetails | null>;
   insertBooking(input: {
     slotId: string;
     guestName: string;

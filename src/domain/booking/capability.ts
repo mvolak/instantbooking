@@ -4,6 +4,7 @@ import {
   findAvailableDatesInput,
   findAvailableSlotsInput,
   getBookingInput,
+  getSlotInput,
   managementTokenSchema,
 } from "@/schemas/booking";
 import { BookingError } from "./errors";
@@ -16,6 +17,7 @@ import type {
   CreateBookingResult,
   RetryResult,
   Service,
+  SlotDetails,
 } from "./types";
 
 export type BookingCapabilityDeps = {
@@ -59,6 +61,19 @@ export function createBookingCapability({ repository, now = () => new Date() }: 
       throw new BookingError("SERVICE_NOT_FOUND", "Service not found");
     }
     return repository.findAvailableDates(input.serviceId, input.days, now());
+  }
+
+  /**
+   * One slot by id with its service and current bookability. Read-only; lets a
+   * channel show exactly what is about to be booked before asking to confirm.
+   */
+  async function getSlot(slotId: string): Promise<SlotDetails> {
+    const input = parse(getSlotInput, { slotId });
+    const slot = await repository.findSlotById(input.slotId, now());
+    if (!slot) {
+      throw new BookingError("SLOT_NOT_FOUND", "Slot not found");
+    }
+    return slot;
   }
 
   async function createBooking(
@@ -132,7 +147,7 @@ export function createBookingCapability({ repository, now = () => new Date() }: 
     return found.booking;
   }
 
-  return { listServices, findAvailableDates, findAvailableSlots, createBooking, getBooking };
+  return { listServices, findAvailableDates, findAvailableSlots, getSlot, createBooking, getBooking };
 }
 
 function replayed(result: Exclude<RetryResult, { kind: "not_found" }>, managementToken: string): CreateBookingResult {

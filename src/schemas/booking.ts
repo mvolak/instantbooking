@@ -57,6 +57,10 @@ export const createBookingInput = z.object({
   idempotencyKey: idempotencyKeySchema,
 });
 
+export const getSlotInput = z.object({
+  slotId: idSchema,
+});
+
 export const getBookingInput = z.object({
   bookingId: idSchema,
   managementToken: z.string(),
