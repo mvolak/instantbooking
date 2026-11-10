@@ -1,0 +1,11 @@
+-- Deterministic seed used by `supabase db reset` and by the automated tests.
+--
+-- Fixed window: ten working days, Mon 2026-03-23 – Fri 2026-04-03 (Europe/Prague).
+-- The window deliberately spans the CET -> CEST switch on Sun 2026-03-29 so
+-- timezone handling is exercised by the seed data itself.
+--
+-- These dates are in the past relative to "now", so the API (which uses the real
+-- clock) will not offer them as available. For interactive demos run
+-- `npm run db:seed:demo`, which generates the same data for the upcoming ten
+-- working days. Both are idempotent.
+select internal.seed_demo_data('2026-03-23');
