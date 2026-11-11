@@ -3,6 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithApprovalResponses, type ChatTransport } from "ai";
 import { MessageCircle, SendHorizontal, Square } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { BookingUIMessage } from "@/ai/booking-agent";
 import { ErrorMessage, Spinner } from "@/components/booking/feedback";
@@ -12,6 +13,11 @@ import { GeneratedUI } from "@/genui/renderer";
 import { checkSpec, specSegments } from "@/genui/validation";
 import { BookingApproval } from "./BookingApproval";
 import { ToolActivity } from "./ToolActivity";
+
+// json-render devtools in development only. The condition is inlined at build
+// time, so production bundles never load it.
+const GenUIDevtools =
+  process.env.NODE_ENV === "development" ? dynamic(() => import("@/genui/devtools"), { ssr: false }) : null;
 
 const SUGGESTIONS = [
   "What kind of appointments do you offer?",
@@ -233,6 +239,7 @@ export function BookingChat({ transport }: Props) {
           </button>
         )}
       </form>
+      {GenUIDevtools && <GenUIDevtools messages={messages} />}
     </div>
   );
 }

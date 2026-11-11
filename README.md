@@ -615,6 +615,29 @@ plain answers stay text-only.
   `registry.tsx` does, so an X or Teams adapter (M5/M6) can map the same
   contracts to native cards.
 
+### Inspecting generated UI
+
+- **json-render devtools** (development only): press **Ctrl/Cmd+Shift+J** or
+  use the toggle on the right edge. The Spec tab shows each generated tree, the
+  Stream tab the patch stream, and Catalog the allowed components. It is loaded
+  only when `NODE_ENV=development` and is absent from production bundles.
+- **Raw stream:** DevTools → Network → `chat` → EventStream. `data-spec` events
+  are the UI patches, `data-uiNotice` means some were rejected. The Response tab
+  stays empty because the reply is a server-sent event stream.
+- **Token usage:** in development the server logs one line per model step, for
+  example `[chat] step tokens: input 5229 (cache read 5039, cache write 0), output 143`.
+
+### Prompt caching
+
+Tool definitions and the stable instructions (role, rules, generative UI guide)
+are identical on every request and end with an Anthropic cache breakpoint
+(`bookingSystemMessages` in `src/ai/booking-instructions.ts`). The current
+date, time and calendar change every minute, so they come after it. A second
+breakpoint on the latest message lets later steps of the same turn (tool call,
+then reply) read the conversation from the cache. Cached tokens cost about a
+tenth of normal input tokens. The cache lives five minutes and is refreshed by
+each hit.
+
 ### Manual test script (M4)
 
 Set up as for M3, then in the chat:
@@ -677,7 +700,8 @@ Set up as for M3, then in the chat:
     A slot taken since then is still selectable, and the booking is then denied
     up front ("no longer available").
   - **Prompt size:** the generation rules add roughly 1.2k input tokens to
-    every request.
+    every request. They are part of the cached prefix, so after the first
+    request they are mostly cache reads.
   - **No editing of existing UI:** a new reply renders a new UI block.
     json-render's edit modes and its state model aren't used.
   - **Pre-1.0 library:** json-render is at 0.22.x; expect API changes when

@@ -8,13 +8,15 @@ import {
   toUIMessageStream,
   type InferUITools,
   type LanguageModel,
+  type LanguageModelUsage,
+  type ModelMessage,
   type UIMessage,
 } from "ai";
 import type { BookingCapability } from "@/domain/booking";
 import type { BookingDataParts } from "@/genui/data-parts";
 import { GENERATIVE_UI_INSTRUCTIONS } from "@/genui/prompt";
 import { withGenerativeUI } from "@/genui/stream";
-import { bookingInstructions } from "./booking-instructions";
+import { bookingSystemMessages } from "./booking-instructions";
 import { createBookingTools, type BookingTools, type CreateBookingOutput } from "./booking-tools";
 import { toolApprovalSecret } from "./secrets";
 
@@ -52,15 +54,18 @@ export async function streamBookingAgent(
 
   const result = streamText({
     model: deps.model,
-    instructions: bookingInstructions({ now: now(), timeZone: deps.timeZone, extra: GENERATIVE_UI_INSTRUCTIONS }),
-    messages: await convertToModelMessages(messages, {
-      tools,
-      ignoreIncompleteToolCalls: true,
-      // Generated UI is presentation only and is not replayed to the model. A
-      // slot picked in that UI reaches it as its authoritative id.
-      convertDataPart: (part) =>
-        part.type === "data-slotSelection" ? { type: "text", text: `Selected slot: ${(part.data as { slotId: string }).slotId}` } : undefined,
-    }),
+    // Tool definitions and the stable instructions are cached (see bookingSystemMessages).
+    instructions: bookingSystemMessages({ now: now(), timeZone: deps.timeZone, extra: GENERATIVE_UI_INSTRUCTIONS }),
+    messages: withConversationCacheBreakpoint(
+      await convertToModelMessages(messages, {
+        tools,
+        ignoreIncompleteToolCalls: true,
+        // Generated UI is presentation only and is not replayed to the model. A
+        // slot picked in that UI reaches it as its authoritative id.
+        convertDataPart: (part) =>
+          part.type === "data-slotSelection" ? { type: "text", text: `Selected slot: ${(part.data as { slotId: string }).slotId}` } : undefined,
+      }),
+    ),
     tools,
     toolApproval,
     experimental_refineToolInput: refineToolInput,
@@ -71,6 +76,9 @@ export async function streamBookingAgent(
     // Room for a short reply plus a generated UI spec.
     maxOutputTokens: 2048,
     abortSignal,
+    onStepEnd: ({ usage }) => {
+      if (process.env.NODE_ENV === "development") console.info(`[chat] step tokens: ${describeUsage(usage)}`);
+    },
   });
 
   const uiStream = toUIMessageStream<BookingTools, BookingUIMessage>({
@@ -82,6 +90,30 @@ export async function streamBookingAgent(
   // Spec fences in the model's text become `data-spec` patch parts, which are
   // then validated against the catalog before anything reaches the browser.
   return withGenerativeUI(uiStream);
+}
+
+/**
+ * Marks the end of the conversation so far as a prompt-cache breakpoint. A
+ * turn often takes several model steps (tool call, then the reply); each step
+ * after the first then reads the whole conversation from the cache.
+ */
+export function withConversationCacheBreakpoint(messages: ModelMessage[]): ModelMessage[] {
+  const last = messages.at(-1);
+  if (!last) return messages;
+  const marked = {
+    ...last,
+    providerOptions: {
+      ...last.providerOptions,
+      anthropic: { ...last.providerOptions?.anthropic, cacheControl: { type: "ephemeral" } },
+    },
+  } as ModelMessage;
+  return [...messages.slice(0, -1), marked];
+}
+
+/** For example "input 9120 (cache read 8402, cache write 0), output 212". */
+export function describeUsage(usage: LanguageModelUsage): string {
+  const { cacheReadTokens = 0, cacheWriteTokens = 0 } = usage.inputTokenDetails ?? {};
+  return `input ${usage.inputTokens ?? 0} (cache read ${cacheReadTokens}, cache write ${cacheWriteTokens}), output ${usage.outputTokens ?? 0}`;
 }
 
 /** Sealed booking credentials from earlier `createBooking` results in this conversation. */

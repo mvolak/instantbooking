@@ -117,6 +117,25 @@ describe("booking agent: discovery and availability", () => {
     expect(part.output.slots[0]).toMatchObject({ providerName: "Eva Physio", providerTimezone: "Europe/Prague" });
   });
 
+  it("marks the stable instructions and the conversation as prompt-cache breakpoints", async () => {
+    const cache = { anthropic: { cacheControl: { type: "ephemeral" } } };
+    const { deps } = agent([
+      expecting((call) => {
+        const [stable, current, ...conversation] = call.prompt;
+        // Stable part first and cached: no clock-dependent text in it.
+        expect(stable).toMatchObject({ role: "system", providerOptions: cache });
+        expect(JSON.stringify(stable)).not.toMatch(/January 2030|11:00 \(Europe/);
+        // The current date and calendar come after the breakpoint.
+        expect(current.role).toBe("system");
+        expect(current.providerOptions).toBeUndefined();
+        expect(JSON.stringify(current)).toContain("Tuesday 8 January 2030, 11:00");
+        // The end of the conversation is the second breakpoint.
+        expect(conversation.at(-1)).toMatchObject({ role: "user", providerOptions: cache });
+      }, say("Hello!")),
+    ]);
+    await runTurn(deps, [userMessage("Hi")]);
+  });
+
   it("keeps the conversation context for a follow-up question", async () => {
     const first = agent([
       callTool("c1", "findAvailableSlots", { serviceId, date: "2030-01-10", from: "12:00", to: "17:00" }),
