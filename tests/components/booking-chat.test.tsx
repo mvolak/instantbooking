@@ -62,6 +62,7 @@ const REVIEW = {
   timeZone: "Europe/Prague",
 };
 const SEALED = "SEALED-CREDENTIAL-should-never-be-rendered";
+const SLOT_ID = "11111111-2222-4333-8444-555555555555";
 
 const approvalRequest: UIMessageChunk[] = [
   { type: "start", messageId: "a1" },
@@ -212,7 +213,7 @@ describe("BookingChat", () => {
     expect(screen.queryByTestId("chat-booking-confirmation")).not.toBeInTheDocument();
   });
 
-  it("shows found times as buttons that continue the conversation", async () => {
+  it("falls back to deterministic time buttons when the reply has no generated UI", async () => {
     const slots: UIMessageChunk[] = [
       { type: "start", messageId: "a1" },
       { type: "tool-input-available", toolCallId: "c1", toolName: "findAvailableSlots", input: { serviceId: "s", date: "2026-11-12" } },
@@ -226,7 +227,7 @@ describe("BookingChat", () => {
           weekday: "Thursday",
           timeZone: "Europe/Prague",
           slots: [
-            { slotId: "x1", startTime: "14:00", endTime: "14:30", startsAtUtc: "", providerName: "M", providerTimezone: "Europe/Prague" },
+            { slotId: SLOT_ID, startTime: "14:00", endTime: "14:30", startsAtUtc: "", providerName: "M", providerTimezone: "Europe/Prague" },
           ],
         },
       },
@@ -239,6 +240,7 @@ describe("BookingChat", () => {
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(sentParts(requests[1])).toEqual([
       { type: "text", text: "I'd like the 14:00 appointment on Thursday 12 November 2026." },
+      { type: "data-slotSelection", data: { slotId: SLOT_ID } },
     ]);
   });
 

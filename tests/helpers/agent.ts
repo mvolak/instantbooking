@@ -123,3 +123,38 @@ export function respondToApproval(messages: BookingUIMessage[], approved: boolea
 export function promptText(call: ModelCall): string {
   return JSON.stringify(call.prompt);
 }
+
+/** The model replies with text streamed in small pieces, like real tokens. */
+export const sayStreamed =
+  (text: string, pieceLength = 9): Turn =>
+  () => [
+    { type: "text-start", id: "t" },
+    ...Array.from({ length: Math.ceil(text.length / pieceLength) }, (_, i) => ({
+      type: "text-delta",
+      id: "t",
+      delta: text.slice(i * pieceLength, (i + 1) * pieceLength),
+    })),
+    { type: "text-end", id: "t" },
+    finish("stop"),
+  ];
+
+/** A ```spec fence with one JSON patch per line, as the model writes it. */
+export const specFence = (...patches: (object | string)[]) =>
+  ["```spec", ...patches.map((p) => (typeof p === "string" ? p : JSON.stringify(p))), "```"].join("\n");
+
+export const rootPatch = (key: string) => ({ op: "add", path: "/root", value: key });
+
+export const elementPatch = (
+  key: string,
+  type: string,
+  props: Record<string, unknown> = {},
+  children: string[] = [],
+  extra: Record<string, unknown> = {},
+) => ({ op: "add", path: `/elements/${key}`, value: { type, props, children, ...extra } });
+
+/** Text parts of a message, joined. */
+export const textOf = (message: BookingUIMessage) =>
+  message.parts
+    .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
+    .map((p) => p.text)
+    .join("");

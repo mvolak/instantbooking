@@ -2,6 +2,7 @@ import "server-only";
 import { createUIMessageStreamResponse, safeValidateUIMessages, type LanguageModel } from "ai";
 import { z } from "zod";
 import type { BookingCapability } from "@/domain/booking";
+import { bookingDataSchemas } from "@/genui/data-parts";
 import { streamBookingAgent, type BookingUIMessage } from "./booking-agent";
 import { readChatConfig, SEARCH_HORIZON_DAYS, STUDIO_TIMEZONE, type ChatConfigResult } from "./config";
 import { clientKey, createRateLimiter, type RateLimiter } from "./rate-limit";
@@ -79,12 +80,20 @@ async function readMessages(
   const body = bodySchema.safeParse(json);
   if (!body.success) return invalid("Request must contain a list of messages");
 
-  const validated = await safeValidateUIMessages<BookingUIMessage>({ messages: body.data.messages });
+  const validated = await safeValidateUIMessages<BookingUIMessage>({
+    messages: body.data.messages,
+    dataSchemas: bookingDataSchemas,
+  });
   if (!validated.success) return invalid("Messages are malformed");
   const messages = validated.data;
 
   // Only the conversation itself is accepted from the client; instructions are server-side.
   if (messages.some((m) => m.role === "system")) return invalid("System messages are not accepted");
+  // Guests can attach a slot selection; generated UI parts only come from the assistant.
+  const userDataOk = messages.every(
+    (m) => m.role !== "user" || m.parts.every((p) => !p.type.startsWith("data-") || p.type === "data-slotSelection"),
+  );
+  if (!userDataOk) return invalid("Messages are malformed");
   const last = messages.at(-1)!;
   const tooLong = last.parts.some((p) => p.type === "text" && p.text.length > MAX_USER_TEXT_CHARS);
   if (tooLong) return invalid(`Messages can be at most ${MAX_USER_TEXT_CHARS} characters`);

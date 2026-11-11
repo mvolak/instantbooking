@@ -3,9 +3,13 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithApprovalResponses, type ChatTransport } from "ai";
 import { MessageCircle, SendHorizontal, Square } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { BookingUIMessage } from "@/ai/booking-agent";
 import { ErrorMessage, Spinner } from "@/components/booking/feedback";
+import type { ActionContext, OutgoingMessage } from "@/genui/actions";
+import { collectBookingData } from "@/genui/booking-data";
+import { GeneratedUI } from "@/genui/renderer";
+import { checkSpec, specSegments } from "@/genui/validation";
 import { BookingApproval } from "./BookingApproval";
 import { ToolActivity } from "./ToolActivity";
 
@@ -41,13 +45,27 @@ export function BookingChat({ transport }: Props) {
     if (log) log.scrollTop = log.scrollHeight;
   }, [messages, status]);
 
-  function send(text: string) {
+  function send(text: string, slotId?: string): boolean {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || busy) return false;
     if (error) clearError();
-    void sendMessage({ text: trimmed });
+    void sendMessage({
+      parts: [
+        { type: "text", text: trimmed },
+        // The exact slot picked in the UI travels with the message as data.
+        ...(slotId ? [{ type: "data-slotSelection" as const, data: { slotId } }] : []),
+      ],
+    });
     setInput("");
+    return true;
   }
+
+  // Authoritative booking data (tool results) that generated UI resolves against.
+  const data = useMemo(() => collectBookingData(messages), [messages]);
+  const actionContext: ActionContext = {
+    data,
+    send: ({ text, slotId }: OutgoingMessage) => send(text, slotId),
+  };
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -92,7 +110,11 @@ export function BookingChat({ transport }: Props) {
           </div>
         )}
 
-        {messages.map((message) => (
+        {messages.map((message, messageIndex) => {
+          const streamingThis = busy && messageIndex === messages.length - 1;
+          const segments = message.role === "assistant" ? specSegments(message.parts) : [];
+          const hasUI = segments.some((segment) => checkSpec(segment.spec, { final: true }).ok);
+          return (
           <article
             key={message.id}
             aria-label={message.role === "user" ? "You" : "Assistant"}
@@ -108,6 +130,18 @@ export function BookingChat({ transport }: Props) {
               {message.parts.map((part, index) => {
                 const key = `${message.id}-${index}`;
                 switch (part.type) {
+                  case "data-spec": {
+                    const segment = segments.find((s) => s.start === index);
+                    return segment ? (
+                      <GeneratedUI
+                        key={key}
+                        segment={segment}
+                        streaming={streamingThis}
+                        context={actionContext}
+                        disabled={busy}
+                      />
+                    ) : null;
+                  }
                   case "text":
                     return part.text ? (
                       <p key={key} className="leading-relaxed break-words whitespace-pre-wrap">
@@ -127,14 +161,24 @@ export function BookingChat({ transport }: Props) {
                   case "tool-findAvailableDates":
                   case "tool-findAvailableSlots":
                   case "tool-getBooking":
-                    return <ToolActivity key={part.toolCallId} part={part} onPickTime={send} disabled={busy} />;
+                  case "tool-listMyBookings":
+                    return (
+                      <ToolActivity
+                        key={part.toolCallId}
+                        part={part}
+                        onPickTime={send}
+                        disabled={busy}
+                        showTimes={!hasUI && !streamingThis}
+                      />
+                    );
                   default:
                     return null;
                 }
               })}
             </div>
           </article>
-        ))}
+          );
+        })}
 
         {status === "submitted" && (
           <p role="status" className="flex items-center gap-2 text-sm text-ink-muted">

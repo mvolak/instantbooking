@@ -13,6 +13,10 @@ Milestones so far:
   agent (Vercel AI SDK + AI Gateway) finds services and real availability in
   natural language and books through the same capability, only after the guest
   approves a server-validated booking card.
+- **M4 — Generative UI:** the agent composes interactive UI inside its replies
+  (json-render): availability pickers, day comparisons, booking lists. It picks
+  the structure; every time, date and booking shown is bound to real tool
+  results, and booking still goes through the signed M3 approval.
 
 There is no authentication or external channel adapter yet.
 
@@ -21,6 +25,7 @@ There is no authentication or external channel adapter yet.
 Node.js 24 · TypeScript (strict) · Next.js 16 App Router · React 19 · Tailwind CSS 4 ·
 lucide-react · Supabase PostgreSQL · [postgres.js](https://github.com/porsager/postgres) · Zod 4 ·
 Vercel AI SDK 7 (`ai`, `@ai-sdk/react`) via Vercel AI Gateway ·
+json-render 0.22 (`@json-render/core`, `@json-render/react`) ·
 Vitest + React Testing Library · Playwright
 
 ## Architecture
@@ -46,6 +51,16 @@ src/
 │   ├── chat-handler.ts      #   POST /api/chat: config, rate limit, validation, bounds
 │   ├── secrets.ts           #   approval signing, idempotency keys, sealed credentials
 │   └── calendar.ts · config.ts · rate-limit.ts
+├── genui/                   # Generative UI (M4)
+│   ├── catalog.ts           #   component + action contracts (Zod), no React
+│   ├── validation.ts        #   patch/spec validation, UI blocks, server stream filter
+│   ├── prompt.ts            #   generation rules for the model
+│   ├── stream.ts            #   json-render inline transform + validation for the UI stream
+│   ├── data-parts.ts        #   spec / uiNotice / slotSelection message parts
+│   ├── booking-data.ts      #   authoritative data index built from tool results
+│   ├── actions.ts           #   trusted handlers for the action allowlist
+│   ├── registry.tsx         #   React implementations of the catalog
+│   └── renderer.tsx         #   validated rendering with error containment
 ├── app/api/                 # REST adapter: thin Route Handlers → capability (+ /api/chat)
 ├── app/page.tsx             # landing page (static content + booking widget)
 ├── lib/booking-client.ts    # typed, framework-free client for the REST API
@@ -184,6 +199,10 @@ pattern starting tomorrow (Prague time) or on the given date.
 All ids are derived deterministically and inserts tolerate conflicts, so both
 seeds can be re-run any number of times without creating duplicates. (Demo
 bookings' tokens are `seed-token-<bookingId>`. That's demo data only.)
+
+[`docs/admin-queries.sql`](docs/admin-queries.sql) has everyday admin queries
+for the Supabase Studio SQL editor: list bookings, today's schedule, find or
+cancel by reference, and delete everything except the seed bookings.
 
 ## Commands
 
@@ -401,6 +420,19 @@ session-scoped `getBooking` (including forged credentials) and model failures.
 headers, 503 without configuration, rate limiting, input validation, history
 bounds and safe errors.
 
+Generative UI (M4) is tested at every layer:
+- `tests/unit/genui.test.ts`: catalog validation; rejected components, props,
+  expressions and actions; tree checks; UI block splitting; the stream
+  transform; and the action handlers.
+- `tests/integration/generative-ui.test.ts`: a scripted model writing spec
+  fences against the real database. It covers availability bound to real slots,
+  a two-day comparison, text-only answers, malicious and truncated specs, slot
+  selection → approval → booking, and conversation-scoped booking lists.
+- `tests/components/generated-ui.test.tsx`: rendering, selection, keyboard,
+  fabricated references, a malicious spec arriving unvalidated in the browser,
+  progressive streaming, and the booking list with its empty state.
+- `e2e/generative-ui.spec.ts`: desktop and mobile, keyboard, overflow.
+
 ## Landing page and booking widget (M2)
 
 - **Visible straight away:** the widget sits in the hero, beside the copy on
@@ -433,6 +465,7 @@ thin adapter over `BookingCapability` and is called in-process, not over HTTP:
 | `findAvailableSlots` | `findAvailableSlots` | `date` (YYYY-MM-DD) plus an optional `from`/`to` local time window; rejects past dates and dates beyond 31 days; empty days suggest other days |
 | `createBooking` | `getSlot` + `createBooking` | **approval-gated**, see below |
 | `getBooking` | `getBooking` | only bookings made in this conversation |
+| `listMyBookings` | `getBooking` per credential | all bookings made in this conversation (M4) |
 
 The LLM interprets language and chooses read operations. All validation,
 availability, concurrency and authorization stay in the domain and database.
@@ -474,7 +507,7 @@ so other bookings are unreachable. A reference alone grants nothing.
 **Limits.**
 - 20 requests per minute per IP.
 - At most 6 model steps and 8 tool executions per request.
-- At most 1,024 output tokens per reply.
+- At most 2,048 output tokens per reply (raised from 1,024 in M4 to fit UI specs).
 - Only the last 30 messages are sent to the model.
 - A message can be at most 2,000 characters, and a request body at most 200 KB.
 - Client-supplied `system` messages are rejected.
@@ -502,6 +535,110 @@ With `AI_GATEWAY_API_KEY` and `CHAT_SIGNING_SECRET` in `.env.local`, run
    refusal.
 10. Without the env variables, the chat says the assistant is unavailable and
     the form still works.
+
+## Generative UI (M4)
+
+The agent can add interactive UI to a reply. It writes a short sentence and
+then a fenced `spec` block of JSON Patch lines. On the server, json-render's
+`pipeJsonRender` turns the fence into `data-spec` message parts, which stream
+into the same `useChat` message as the text and tool parts. Text and UI
+interleave in the order they were streamed.
+
+**Who decides what.** The model decides *how* to present things: which
+components, how they're grouped and emphasised, and what prose goes around
+them. The tools and the domain decide *what* is true and what may happen:
+
+- **Booking components hold references, not facts.** `SlotPicker {date, from?,
+  to?}`, `SlotOption {slotId}`, `DayOverview`, `ServiceSummary {serviceId}`,
+  `BookingDetails {reference}` and `BookingList {references?}` are resolved in
+  the browser against tool results already in the conversation
+  (`genui/booking-data.ts`). A date that wasn't looked up, an unknown slot id or
+  a reference outside the conversation renders an "unavailable" note, never a
+  time or booking. A booked slot drops out of every picker.
+- **Free prose is limited to layout components** (`Card` titles, `Text`), with
+  length limits. The prompt forbids putting facts there that no tool returned.
+- **No generated approval.** No component or action can confirm, approve,
+  cancel or create a booking. The approval card and the confirmation card are
+  still rendered from the signed `createBooking` tool call (M3), not from a
+  spec. A generated "Confirm" button is rejected by validation, and has no
+  handler to call even if it slipped through.
+
+**Catalog** (`genui/catalog.ts`, Zod strict objects):
+- Layout: `Stack`, `Card`, `Text`, `Divider`.
+- Booking: `ServiceSummary`, `DayOverview`, `SlotPicker`, `SlotOption`,
+  `BookingDetails`, `BookingList`.
+- Interaction: `ActionButton` plus three allowlisted actions, each run by a
+  trusted handler (`genui/actions.ts`) that re-validates its parameters:
+  - `selectSlot {slotId}`: only for a slot a tool returned. It sends the guest's
+    message with the slot id attached as a `data-slotSelection` part, which
+    reaches the model as `Selected slot: <id>`. That keeps the authoritative id
+    instead of a label like "16:30". The server still re-checks the id
+    (`getSlot`), and booking still needs the signed approval.
+  - `showDay {date}`: asks for that day's times.
+  - `sendMessage {text}`: sends a short follow-up as the guest.
+
+**Validation happens twice:**
+1. **On the server, per patch, before streaming** (`validateSpecStream`):
+   - Only `add`/`replace` of `/root` or a whole `/elements/<key>` is accepted.
+   - Every element is checked: known component, strict props, children only on
+     containers, actions only on `ActionButton` and only from the allowlist.
+   - There is no state model, and no `$state`/`$cond`/`$template` expressions,
+     `repeat`, `visible` or `watch`.
+   - At most 60 patches per response.
+   - Rejected patches are dropped and a `data-uiNotice` part is sent.
+2. **In the browser, before rendering:** patches are re-validated (messages live
+   in the browser and are resent, so they aren't trusted). Each UI block must
+   form a tree: no cycles or shared children, depth ≤ 8, ≤ 40 elements.
+   - While streaming, incomplete trees render progressively.
+   - A finished invalid tree shows "Part of this reply couldn't be displayed."
+   - Render errors are contained by an error boundary.
+   - Guests can't submit `data-spec` parts; the route rejects them.
+
+**Fallbacks.** If a reply has no valid generated UI, the found times are shown
+as plain buttons under the tool status line, as in M3. Clarifying questions and
+plain answers stay text-only.
+
+**Implementation notes:**
+- **Own prompt.** json-render's stock inline prompt
+  (`catalog.prompt({ mode: "inline" })`) is about 18k characters and tells the
+  model to invent "realistic sample data" and to use state, `setState` and
+  watchers. Only its generated component list is reused (`genui/prompt.ts`);
+  the rules are our own and much shorter.
+- **Several UI blocks per message.** `useJsonRenderMessage` merges all patches
+  in a message into one spec. Our assistant messages span several steps (UI →
+  approval → confirmation in one message), so `specSegments` splits them into
+  separate blocks instead. It uses json-render's `applySpecPatch`.
+- **Fewer stream chunks.** json-render's transform re-emits text one character
+  per chunk. `genui/stream.ts` merges it back to one chunk per model token,
+  which keeps streaming progressive without a chunk per character.
+- **Portability.** The catalog and actions don't depend on React. Only
+  `registry.tsx` does, so an X or Teams adapter (M5/M6) can map the same
+  contracts to native cards.
+
+### Manual test script (M4)
+
+Set up as for M3, then in the chat:
+
+- **A. Single date:** "Show me available appointments next Thursday afternoon."
+  You get a card with a time picker. The times match the booking form for that
+  day.
+- **B. Comparison:** "Compare available appointments on Thursday and Friday."
+  You get one card per day (or another grouped layout), each with real times.
+- **C. Selection:** click a time in the generated card. Your message ("I'd like
+  the HH:MM appointment on …") appears, the time shows as selected, and the
+  agent asks for your name or prepares the booking.
+- **D. Approval:** give a name. The M3 confirmation card appears (not
+  generated). Press **Confirm booking**: a real booking is made, and the time
+  disappears from the form and from the generated picker.
+- **E. Rejection:** prepare another booking and press **Cancel**. Nothing is
+  booked.
+- **F. Bookings:** "Show all my bookings." You get a list of this
+  conversation's bookings with status. In a fresh chat you get the empty state.
+- **G. Conflict:** prepare a booking card, book the same time with the form in
+  another tab, then confirm in the chat. You get "no longer available", and no
+  double booking.
+- **H. Plain conversation:** "What's a physiotherapy consultation?" gives a text
+  answer with no card.
 
 ## Known limitations
 
@@ -532,3 +669,16 @@ With `AI_GATEWAY_API_KEY` and `CHAT_SIGNING_SECRET` in `.env.local`, run
   - **Scope:** English only; no conversation persistence.
   - **No live-model CI:** automated tests use a mock model. The real model is
     exercised manually with the script above.
+- **Generative UI (M4):**
+  - **Layout quality:** the layout depends on the model. Invalid output is
+    dropped safely, but a weaker model may answer in plain text more often.
+    `BOOKING_AI_MODEL` can point to a stronger model.
+  - **Data freshness:** generated UI shows availability as of the last lookup.
+    A slot taken since then is still selectable, and the booking is then denied
+    up front ("no longer available").
+  - **Prompt size:** the generation rules add roughly 1.2k input tokens to
+    every request.
+  - **No editing of existing UI:** a new reply renders a new UI block.
+    json-render's edit modes and its state model aren't used.
+  - **Pre-1.0 library:** json-render is at 0.22.x; expect API changes when
+    upgrading.

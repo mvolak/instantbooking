@@ -261,6 +261,32 @@ export function createBookingTools({ capability, secret, now, timeZone, horizonD
         };
       },
     }),
+
+    listMyBookings: tool({
+      description:
+        "List the bookings made earlier in this conversation, with their current status. Other bookings cannot be accessed.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        if (overLimit()) return limitReached;
+        const bookings: ConfirmedBooking[] = [];
+        const seen = new Set<string>();
+        for (const sealed of accessible) {
+          const access = openBookingAccess(secret, sealed);
+          if (!access || seen.has(access.bookingId)) continue;
+          seen.add(access.bookingId);
+          try {
+            bookings.push(toConfirmed(await capability.getBooking(access.bookingId, access.managementToken)));
+          } catch (error) {
+            // A credential that no longer opens its booking is simply skipped.
+            if (!(error instanceof BookingError && error.code === "BOOKING_ACCESS_DENIED")) throw error;
+          }
+        }
+        if (bookings.length === 0) {
+          return { status: "none" as const, message: "No bookings have been made in this conversation yet." };
+        }
+        return { status: "ok" as const, bookings };
+      },
+    }),
   };
 
   /**

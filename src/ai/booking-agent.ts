@@ -11,11 +11,14 @@ import {
   type UIMessage,
 } from "ai";
 import type { BookingCapability } from "@/domain/booking";
+import type { BookingDataParts } from "@/genui/data-parts";
+import { GENERATIVE_UI_INSTRUCTIONS } from "@/genui/prompt";
+import { withGenerativeUI } from "@/genui/stream";
 import { bookingInstructions } from "./booking-instructions";
 import { createBookingTools, type BookingTools, type CreateBookingOutput } from "./booking-tools";
 import { toolApprovalSecret } from "./secrets";
 
-export type BookingUIMessage = UIMessage<never, never, InferUITools<BookingTools>>;
+export type BookingUIMessage = UIMessage<never, BookingDataParts, InferUITools<BookingTools>>;
 
 /** Model steps per request (each step = one model call, possibly with tool calls). */
 export const MAX_AGENT_STEPS = 6;
@@ -49,8 +52,15 @@ export async function streamBookingAgent(
 
   const result = streamText({
     model: deps.model,
-    instructions: bookingInstructions({ now: now(), timeZone: deps.timeZone }),
-    messages: await convertToModelMessages(messages, { tools, ignoreIncompleteToolCalls: true }),
+    instructions: bookingInstructions({ now: now(), timeZone: deps.timeZone, extra: GENERATIVE_UI_INSTRUCTIONS }),
+    messages: await convertToModelMessages(messages, {
+      tools,
+      ignoreIncompleteToolCalls: true,
+      // Generated UI is presentation only and is not replayed to the model. A
+      // slot picked in that UI reaches it as its authoritative id.
+      convertDataPart: (part) =>
+        part.type === "data-slotSelection" ? { type: "text", text: `Selected slot: ${(part.data as { slotId: string }).slotId}` } : undefined,
+    }),
     tools,
     toolApproval,
     experimental_refineToolInput: refineToolInput,
@@ -58,16 +68,20 @@ export async function streamBookingAgent(
     // so a client cannot fabricate or alter an approved booking.
     experimental_toolApprovalSecret: toolApprovalSecret(deps.signingSecret),
     stopWhen: isStepCount(MAX_AGENT_STEPS),
-    maxOutputTokens: 1024,
+    // Room for a short reply plus a generated UI spec.
+    maxOutputTokens: 2048,
     abortSignal,
   });
 
-  return toUIMessageStream<BookingTools, BookingUIMessage>({
+  const uiStream = toUIMessageStream<BookingTools, BookingUIMessage>({
     stream: result.stream,
     tools,
     originalMessages: messages,
     onError: publicErrorMessage,
   });
+  // Spec fences in the model's text become `data-spec` patch parts, which are
+  // then validated against the catalog before anything reaches the browser.
+  return withGenerativeUI(uiStream);
 }
 
 /** Sealed booking credentials from earlier `createBooking` results in this conversation. */
